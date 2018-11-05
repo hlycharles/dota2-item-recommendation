@@ -3,6 +3,8 @@ import os
 from multiprocessing import Pool
 import numpy as np
 
+FOLDER = '../examples'
+
 def is_valid_match_file(match_file):
     if (os.path.isdir(match_file)):
         return False
@@ -10,7 +12,7 @@ def is_valid_match_file(match_file):
 
 def read_match_features(match_file):
     data = None
-    with open( '../examples/' + match_file, 'r') as f:
+    with open(FOLDER + '/' + match_file, 'r') as f:
         data = json.load(f)
     examples = data['examples']
     features = []
@@ -38,4 +40,4 @@ def read_data(path):
 
 
 if __name__ == "__main__":
-    read_data('../examples')
+    read_data(FOLDER)

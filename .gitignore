@@ -1,0 +1,14 @@
+# system file
+.DS_Store
+
+# data
+data_100
+data_pro
+data.json
+
+# outputs
+features.json
+examples
+
+# pyc
+*.pyc

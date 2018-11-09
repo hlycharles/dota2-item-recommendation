@@ -1,5 +1,5 @@
 '''
-plain neural network that
+plain neural network that predicts the end result of DOTA2 game
 
 the number of layers and size of each hidden layer can be specified through
 command line arguments. default hidden layer sizes are 100, 10

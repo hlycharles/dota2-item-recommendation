@@ -1,3 +1,7 @@
+'''
+extract all hero name and corresponding ids
+'''
+
 import requests
 import json
 

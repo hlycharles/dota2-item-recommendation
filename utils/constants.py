@@ -1,4 +1,8 @@
 
+'''
+Constants used in feature extractor
+'''
+
 objective_map = {
     "npc_dota_badguys_melee_rax_top": 0,
     "npc_dota_badguys_melee_rax_mid": 1,
@@ -32,7 +36,8 @@ objective_map = {
     "npc_dota_goodguys_tower1_mid": 29,
     "npc_dota_goodguys_tower1_bot": 30,
     "npc_dota_goodguys_tower4": 31,
-    "CHAT_MESSAGE_ROSHAN_KILL": 32
+    "CHAT_MESSAGE_ROSHAN_KILL": 32,
+    "CHAT_MESSAGE_FIRSTBLOOD": 33
 }
 
 unit_map = {
@@ -335,3 +340,9 @@ item_map = {
     "meteor_hammer": 156,
     "mekansm": 157
 }
+
+LEVEL_XPS = [
+    0, 230, 600, 1080, 1680, 2300, 2940, 3600, 4280, 5080, 5900, 6740,
+    7640, 8865, 10115, 11390, 12690, 14015, 15415, 16905, 18405,
+    20155, 22155, 24405, 26905
+]

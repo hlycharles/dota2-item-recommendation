@@ -1,3 +1,7 @@
+'''
+get match stats from opendota api
+'''
+
 import requests
 import time
 import json

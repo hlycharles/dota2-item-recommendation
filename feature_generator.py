@@ -1,13 +1,27 @@
+'''
+Generate features from raw api responses
+
+For each match, the generator picks a random time slice and generates a
+(feature, game_result) pair for each player in the match. The feature
+includes both game level features and player level features for all
+10 players in the match
+'''
+
 import json
 import os
 from multiprocessing import Pool
-from utils import objective_map, hero_map, unit_map, item_map
-from item import build_items
+from utils import constants
+import sys
+import random
 
-time_slice_min = 60
-time_slice = time_slice_min * 60
+objective_map = constants.objective_map
+hero_map = constants.hero_map
+unit_map = constants.unit_map
+item_map = constants.item_map
+LEVEL_XPS = constants.LEVEL_XPS
+
 hero_count = 121
-# is_present, time, unit, team, player_slot
+# is_present, time, unit, team, player_index
 objective_len = 5
 # is_present, is_pick, team
 pickban_len = 3
@@ -16,10 +30,15 @@ purchase_len = 2
 # count, last_time
 runes_types = 7
 runes_len = 2
+ability_upgrades_len = 25
 
 data_folder = 'data_pro'
 out_folder = 'examples'
 
+
+# --------------------
+# IO helpers
+# --------------------
 def load_matches():
     matches = []
     subdirs = [name for name in os.listdir(data_folder) if os.path.isdir(os.path.join(data_folder, name))]
@@ -35,12 +54,15 @@ def load_data(match_file):
         match = json.load(f)
         return match
 
-def get_objectives(objectives):
+# --------------------
+# Individual feature extractors
+# --------------------
+def get_objectives(objectives, time_slice):
     result = [0] * (len(objective_map) * objective_len)
 
     for objective in objectives:
         objective_time = objective['time']
-        if (objective_time > time_slice):
+        if (objective_time > time_slice * 60):
             continue
 
         objective_type = objective['type']
@@ -73,11 +95,11 @@ def get_objectives(objectives):
             team = objective['team'] + 1
         result[base_index + 3] = team
 
-        # player slot
-        player_slot = 0
+        # player index
+        player_index = 0
         if ('player_slot' in objective):
-            player_slot = objective['player_slot']
-        result[base_index + 4] = player_slot
+            player_index = get_player_index(objective['player_slot']) + 1
+        result[base_index + 4] = player_index
 
     return result
 
@@ -103,9 +125,9 @@ def get_pickbans(pickbans):
 
     return result
 
-def get_recent_vals(vals, count = 5):
+def get_recent_vals(vals, time_slice, count = 5):
     result = []
-    start_index = min(time_slice_min, len(vals) - 1)
+    start_index = min(time_slice, len(vals) - 1)
     for i in range(count):
         index = start_index - i
         val = 0
@@ -114,54 +136,16 @@ def get_recent_vals(vals, count = 5):
         result.append(val)
     return result
 
-
-def get_match_feature(match):
-    result = []
-
-    # duration
-    result.append(time_slice)
-
-    # first blood time
-    fbt_record = match['first_blood_time']
-    first_blood_time = -1 if fbt_record > time_slice else fbt_record
-    result.append(first_blood_time)
-
-    # objectives
-    objectives = get_objectives(match['objectives'])
-    result.extend(objectives)
-
-    # pickbans
-    pickbans = get_pickbans(match['picks_bans'])
-    result.extend(pickbans)
-
-    # radiant gold advantage
-    radiant_gold_adv = get_recent_vals(match['radiant_gold_adv'])
-    result.extend(radiant_gold_adv)
-
-    # radiant win
-    # radiant_win = 1 if match['radiant_win'] else 0
-    # result.append(radiant_win)
-
-    # radiant xp advantage
-    radiant_xp_adv = get_recent_vals(match['radiant_xp_adv'])
-    result.extend(radiant_xp_adv)
-
-    # patch
-    patch = match['patch']
-    result.append(patch)
-
-    return result
-
-def count_log(log):
+def count_log(log, time_slice):
     if (log == None):
-        return []
+        return [0, 0]
 
     entry_count = 0
     most_recent_time = -1
 
     for entry in log:
         entry_time = entry['time']
-        if (entry_time > time_slice):
+        if (entry_time > time_slice * 60):
             continue
         if (most_recent_time < 0 or entry_time > most_recent_time):
             most_recent_time = entry_time
@@ -181,12 +165,14 @@ def get_player_slot(player_slot):
     result[get_player_index(player_slot)] = 1
     return result
 
-def get_purchase_log(purchase_log):
+def get_purchase_log(purchase_log, time_slice):
     result = [0] * (len(item_map) * purchase_len)
 
     for purchase in purchase_log:
         purchase_time = purchase['time']
         purchase_name = purchase['key']
+        if (purchase_time > time_slice * 60):
+            continue
         if (not purchase_name in item_map):
             continue
         item_id = item_map[purchase_name]
@@ -197,13 +183,15 @@ def get_purchase_log(purchase_log):
 
     return result
 
-def get_runes_log(runes_log):
+def get_runes_log(runes_log, time_slice):
     result = [0] * (runes_types * runes_len)
 
     for runes in runes_log:
         time = runes['time']
         key = runes['key']
-        if (key >= runes_types):
+        if (time > time_slice * 60):
+            continue
+        if (key >= runes_types or key < 0):
             continue
         base_index = key * runes_len
         result[base_index] += 1
@@ -212,28 +200,87 @@ def get_runes_log(runes_log):
 
     return result
 
+def get_ability_upgrades(xp_t, upgrades, time_slice):
+    result = [0] * ability_upgrades_len
+    if (upgrades == None or xp_t == None):
+        return result
 
-def get_player_feature(player):
+    xp_index = min(time_slice, len(xp_t) - 1)
+    xp = xp_t[xp_index]
+
+    level = len(LEVEL_XPS)
+    while (LEVEL_XPS[level - 1] > xp):
+        level -= 1
+
+    upgrades = upgrades[:level]
+    result[:len(upgrades)] = upgrades
+
+    return result
+
+# --------------------
+# match level feature extractor
+# --------------------
+def get_match_feature(match, is_radiant, time_slice):
     result = []
 
-    # player slot
-    player_slot = get_player_slot(player['player_slot'])
-    result.extend(player_slot)
+    # duration
+    result.append(time_slice)
+
+    # first blood time
+    fbt_record = match['first_blood_time']
+    first_blood_time = -1 if fbt_record > time_slice * 60 else fbt_record
+    result.append(first_blood_time)
+
+    # objectives
+    objectives = get_objectives(match['objectives'], time_slice)
+    result.extend(objectives)
+
+    # radiant gold advantage
+    radiant_gold_adv = get_recent_vals(match['radiant_gold_adv'], time_slice)
+    if (not is_radiant):
+        radiant_gold_adv = map(lambda x: -x, radiant_gold_adv)
+    result.extend(radiant_gold_adv)
+
+    # radiant xp advantage
+    radiant_xp_adv = get_recent_vals(match['radiant_xp_adv'], time_slice)
+    if (not is_radiant):
+        radiant_xp_adv = map(lambda x: -x, radiant_xp_adv)
+    result.extend(radiant_xp_adv)
+
+    # patch
+    patch = match['patch']
+    result.append(patch)
+
+    return result
+
+# --------------------
+# player level feature extractor
+# --------------------
+def get_player_feature(player, time_slice):
+    result = []
+
+    # is radiant
+    is_radiant = 1 if player['player_slot'] <= 127 else 0
+    result.append(is_radiant)
 
     # hero id
     hero_id = player['hero_id']
     result.append(hero_id)
 
     # buyback log
-    buyback_log = count_log(player['buyback_log'])
+    buyback_log = count_log(player['buyback_log'], time_slice)
     result.extend(buyback_log)
 
+    # ability upgrades
+    ability_upgrades = get_ability_upgrades(player['xp_t'], player['ability_upgrades_arr'], time_slice)
+    result.extend(ability_upgrades)
+
     # gold_t
-    gold_t = get_recent_vals(player['gold_t'])
+    gold_t = get_recent_vals(player['gold_t'], time_slice)
     result.extend(gold_t)
 
     # kills log
-    kills_log = count_log(player['kills_log'])
+    kills_log = count_log(player['kills_log'], time_slice)
     result.extend(kills_log)
 
     # leaver status
@@ -241,27 +288,27 @@ def get_player_feature(player):
     result.append(leaver_status)
 
     # lh_t
-    lh_t = get_recent_vals(player['lh_t'])
+    lh_t = get_recent_vals(player['lh_t'], time_slice)
     result.extend(lh_t)
 
     # purchase log
-    purchase_log = get_purchase_log(player['purchase_log'])
+    purchase_log = get_purchase_log(player['purchase_log'], time_slice)
     result.extend(purchase_log)
 
     # runes log
-    runes_log = get_runes_log(player['runes_log'])
+    runes_log = get_runes_log(player['runes_log'], time_slice)
     result.extend(runes_log)
 
     # sentry log
-    sentry_log = count_log(player['sen_log'])
+    sentry_log = count_log(player['sen_log'], time_slice)
     result.extend(sentry_log)
 
     # sentry left log
-    sentry_left_log = count_log(player['sen_left_log'])
+    sentry_left_log = count_log(player['sen_left_log'], time_slice)
     result.extend(sentry_left_log)
 
     # xp_t
-    xp_t = get_recent_vals(player['xp_t'])
+    xp_t = get_recent_vals(player['xp_t'], time_slice)
     result.extend(xp_t)
 
     # rank tier
@@ -272,29 +319,65 @@ def get_player_feature(player):
 
     return result
 
+# --------------------
+# feature combinator
+# --------------------
 def get_feature(match_file):
     match = load_data(match_file)
 
+    # generate random time slice
+    duration = match['duration']
+    max_time_slice = duration / 60
+    time_slice = random.randint(min(5, max_time_slice), max_time_slice)
+
     result = [None] * 10
 
-    shared_features = get_match_feature(match)
+    radiant_shared_features = get_match_feature(match, True, time_slice)
+    dire_shared_features = get_match_feature(match, False, time_slice)
+
+    radiant_features = []
+    dire_features = []
 
     for player in match['players']:
-        palyer_features = get_player_feature(player)
-        shared_features.extend(palyer_features)
+        palyer_features = get_player_feature(player, time_slice)
+        is_radiant = player['player_slot'] <= 127
+        if (is_radiant):
+            radiant_features.append(palyer_features)
+        else:
+            dire_features.append(palyer_features)
 
     radiant_win = match['radiant_win']
 
-    for player in match['players']:
-        player_slot = get_player_slot(player['player_slot'])
-        player_features = list(shared_features)
-        player_features.extend(player_slot)
+    for i in range(len(radiant_features)):
+        radiant_feature = radiant_features[i]
+        player_features = list(radiant_shared_features)
+        player_features.extend(radiant_feature)
+        for j in range(len(radiant_features)):
+            if (i == j):
+                continue
+            player_features.extend(radiant_features[j])
+        for dire_feature in dire_features:
+            player_features.extend(dire_feature)
 
-        player_index = get_player_index(player['player_slot'])
-        is_radiant = player_index < 5
-        player_win = 1 if radiant_win == is_radiant else 0
+        player_win = 1 if radiant_win else 0
+        result[i] = {
+            "x": player_features,
+            "y": player_win,
+        }
 
-        result[player_index] = {
+    for i in range(len(dire_features)):
+        dire_feature = dire_features[i]
+        player_features = list(dire_shared_features)
+        player_features.extend(dire_feature)
+        for j in range(len(dire_features)):
+            if (i == j):
+                continue
+            player_features.extend(dire_features[j])
+        for radiant_feature in radiant_features:
+            player_features.extend(radiant_feature)
+
+        player_win = 0 if radiant_win else 1
+        result[i + 5] = {
             "x": player_features,
             "y": player_win,
         }
@@ -313,60 +396,12 @@ def get_features(match_files):
     features = pool.map(get_feature, match_files)
     pool.close()
     pool.join()
-    return features
-
-def check_valid(match_file):
-    data = load_data(match_file)
-    mode = data['game_mode']
-    if (mode == 1 or mode == 2):
-        return 1
-    return 0
-
-def get_slots(match_file):
-    item = set()
-    data = load_data(match_file)
-    players = data['players']
-    for player in players:
-        player_slot = player['player_slot']
-        item.add(player_slot)
-    return item
-
-def get_pb(match_file):
-    item = set()
-    data = load_data(match_file)
-    pickbans = data['picks_bans']
-    if (pickbans == None):
-        return item
-    for pickban in pickbans:
-        hero_id = pickban['hero_id']
-        item.add(hero_id)
-    return item
 
 if __name__ == "__main__":
+    if (len(sys.argv) > 1):
+        data_folder = sys.argv[1]
+    if (len(sys.argv) > 2):
+        out_folder = sys.argv[2]
+
     matches = load_matches()
-
-    features = get_features(matches)
-
-    # all_features = reduce(lambda x, y: x + y, features)
-    # with open('./features.json', 'w') as f:
-    #     json.dump({
-    #         'examples': all_features
-    #     }, f)
-
-    # match = matches[2]
-    # feature = get_feature(match)
-
-    # print "total: " + str(len(matches))
-    # pool = Pool()
-    # valid = pool.map(check_valid, matches)
-    # pool.close()
-    # pool.join()
-    # valid_count = sum(valid)
-    # print "valid: " + str(valid_count)
-
-    # pool = Pool()
-    # player_slots = pool.map(get_pb, matches)
-    # pool.close()
-    # pool.join()
-    # all_slots = reduce(lambda x, y: x.union(y), player_slots)
-    # print all_slots
+    get_features(matches)

@@ -2,13 +2,10 @@
 .DS_Store
 
 # data
-data_100
-data_pro
-data.json
+data
 
 # outputs
-features.json
-examples
+out
 
 # pyc
 *.pyc

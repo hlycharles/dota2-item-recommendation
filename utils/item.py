@@ -1,3 +1,7 @@
+'''
+extract all item name and corresponding ids
+'''
+
 import json
 from multiprocessing import Pool
 

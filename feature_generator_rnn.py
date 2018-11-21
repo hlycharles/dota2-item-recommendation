@@ -21,19 +21,23 @@ item_map = constants.item_map
 LEVEL_XPS = constants.LEVEL_XPS
 
 hero_count = 121
-# is_present, time, unit, team, player_index
-objective_len = 5
+# is_present
+objective_len = 1
 # is_present, is_pick, team
 pickban_len = 3
-# count, last_purchase_time
-purchase_len = 2
+# count
+purchase_len = 5
 # count, last_time
 runes_types = 7
 runes_len = 2
-ability_upgrades_len = 25
+ability_upgrades_len = 3
 
 data_folder = 'data_pro'
 out_folder = 'examples'
+
+train_set = set()
+dev_set = set()
+test_set = set()
 
 
 # --------------------
@@ -73,59 +77,13 @@ def get_objectives(objectives, time_slice):
 
         objective_id = objective_map[objective_type]
         base_index = objective_id * objective_len
+
         # mark as present
         result[base_index] = 1
 
-        # time
-        result[base_index + 1] = objective['time']
-
-        # unit
-        unit_id = 0
-        if ('unit' in objective):
-            objective_unit = objective['unit']
-            if (objective_unit in hero_map):
-                unit_id = hero_map[objective_unit]
-            elif (objective_unit in unit_map):
-                unit_id = unit_map[objective_unit] + hero_count
-        result[base_index + 2] = unit_id
-
-        # team
-        team = 0
-        if ('team' in objective):
-            team = objective['team'] + 1
-        result[base_index + 3] = team
-
-        # player index
-        player_index = 0
-        if ('player_slot' in objective):
-            player_index = get_player_index(objective['player_slot']) + 1
-        result[base_index + 4] = player_index
-
     return result
 
-def get_pickbans(pickbans):
-    result = [0] * (hero_count * pickban_len)
-
-    if (pickbans == None):
-        return result
-
-    for pickban in pickbans:
-        hero_id = pickban['hero_id']
-        base_index = (hero_id - 1) * pickban_len
-
-        # is present
-        result[base_index] = 1
-
-        # is_pick
-        is_pick = 1 if pickban['is_pick'] else 0
-        result[base_index + 1] = is_pick
-
-        # team
-        result[base_index + 2] = pickban['team']
-
-    return result
-
-def get_recent_vals(vals, time_slice, count = 5):
+def get_recent_vals(vals, time_slice, count = 1):
     result = []
     start_index = min(time_slice, len(vals) - 1)
     for i in range(count):
@@ -166,20 +124,24 @@ def get_player_slot(player_slot):
     return result
 
 def get_purchase_log(purchase_log, time_slice):
-    result = [0] * (len(item_map) * purchase_len)
+    result = [0] * purchase_len
+
+    purchases = []
 
     for purchase in purchase_log:
         purchase_time = purchase['time']
         purchase_name = purchase['key']
-        if (purchase_time > time_slice * 60):
+        if (purchase_time >= time_slice * 60 or (time_slice > 0 and purchase_time < (time_slice - 1) * 60)):
             continue
         if (not purchase_name in item_map):
             continue
         item_id = item_map[purchase_name]
-        base_index = item_id * purchase_len
-        result[base_index] += 1
-        if (result[base_index] == 1 or purchase_time > result[base_index + 1]):
-            result[base_index + 1] = purchase_time
+        purchases.append(item_id)
+
+    if (len(purchases) <= purchase_len):
+        result[:len(purchases)] = purchases
+    else:
+        result = purchases[-purchase_len:]
 
     return result
 
@@ -213,7 +175,10 @@ def get_ability_upgrades(xp_t, upgrades, time_slice):
         level -= 1
 
     upgrades = upgrades[:level]
-    result[:len(upgrades)] = upgrades
+    if (len(upgrades) <= ability_upgrades_len):
+        result[:len(upgrades)] = upgrades
+    else:
+        result = upgrades[-ability_upgrades_len:]
 
     return result
 
@@ -222,9 +187,6 @@ def get_ability_upgrades(xp_t, upgrades, time_slice):
 # --------------------
 def get_match_feature(match, is_radiant, time_slice):
     result = []
-
-    # duration
-    result.append(time_slice)
 
     # first blood time
     fbt_record = match['first_blood_time']
@@ -322,14 +284,48 @@ def get_player_feature(player, time_slice):
 # --------------------
 # feature combinator
 # --------------------
-def get_feature(match_file):
+def get_feature(args):
+    match_file, match_index = args
+
+    result = []
+    for i in range(10):
+        result.append([])
+
     match = load_data(match_file)
+    time_slices = [t for t in range(51)]
+    features = map(lambda t: get_feature_at_time(match, t), time_slices)
 
-    # generate random time slice
-    duration = match['duration']
-    max_time_slice = duration / 60
-    time_slice = random.randint(min(5, max_time_slice), max_time_slice)
+    data = {}
+    data["init"] = map(lambda x: x[0], features[0])
+    wins = map(lambda x: x[1], features[0])
+    for t in range(1, len(features)):
+        for p in range(len(features[t])):
+            result[p].append(features[t][p][0])
 
+    steps = []
+    for i in range(len(result)):
+        steps.append({
+            "x": result[i],
+            "y": wins[i]
+        })
+    data["steps"] = steps
+
+    match_id = match['match_id']
+    subfolder = "unknown"
+    if (match_index in train_set):
+        subfolder = "train"
+    elif (match_index in dev_set):
+        subfolder = "dev"
+    elif (match_index in test_set):
+        subfolder = "test"
+    filename = os.path.join(out_folder, subfolder, str(match_id) + '.json')
+    with open(filename, 'w') as f:
+        json.dump(data, f)
+
+    return True
+
+
+def get_feature_at_time(match, time_slice):
     result = [None] * 10
 
     radiant_shared_features = get_match_feature(match, True, time_slice)
@@ -338,6 +334,8 @@ def get_feature(match_file):
     radiant_features = []
     dire_features = []
 
+    players = match["players"]
+    players.sort(key = lambda p: p["player_slot"])
     for player in match['players']:
         palyer_features = get_player_feature(player, time_slice)
         is_radiant = player['player_slot'] <= 127
@@ -360,10 +358,7 @@ def get_feature(match_file):
             player_features.extend(dire_feature)
 
         player_win = 1 if radiant_win else 0
-        result[i] = {
-            "x": player_features,
-            "y": player_win,
-        }
+        result[i] = (player_features, player_win)
 
     for i in range(len(dire_features)):
         dire_feature = dire_features[i]
@@ -377,25 +372,31 @@ def get_feature(match_file):
             player_features.extend(radiant_feature)
 
         player_win = 0 if radiant_win else 1
-        result[i + 5] = {
-            "x": player_features,
-            "y": player_win,
-        }
-
-    match_id = match['match_id']
-    filename = out_folder + '/' + str(match_id) + '.json'
-    with open(filename, 'w') as f:
-        json.dump({
-            'examples': result
-        }, f)
+        result[i + 5] = (player_features, player_win)
 
     return result
 
 def get_features(match_files):
+    random.shuffle(match_files)
+    match_files = match_files[:6000]
+
+    match_indices = [
+        (match_file, i) for i, match_file in enumerate(match_files)
+    ]
+    indices = range(len(match_indices))
+
+    global dev_set
+    global test_set
+    global train_set
+    dev_set = set(indices[:500])
+    test_set = set(indices[500:1000])
+    train_set = set(indices[1000:])
+
     pool = Pool()
-    features = pool.map(get_feature, match_files)
+    features = pool.map(get_feature, match_indices)
     pool.close()
     pool.join()
+
 
 if __name__ == "__main__":
     if (len(sys.argv) > 1):
@@ -405,5 +406,8 @@ if __name__ == "__main__":
 
     if (not os.path.exists(out_folder)):
         os.makedirs(out_folder)
+        os.mkdir(os.path.join(out_folder, "train"))
+        os.mkdir(os.path.join(out_folder, "dev"))
+        os.mkdir(os.path.join(out_folder, "test"))
     matches = load_matches()
     get_features(matches)

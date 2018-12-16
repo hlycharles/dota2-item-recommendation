@@ -1,6 +1,6 @@
 '''
-read all examples and present as a tuple of array of features and
-corresponding labels
+read all examples and present as a tuple of array of inital features,
+features at each step and corresponding labels
 '''
 
 import os
@@ -32,9 +32,13 @@ def read_data(match_files):
     features = np.array(examples[1])
     labels_arr = examples[2]
     m = len(labels_arr)
-    labels = np.array(labels_arr).reshape(m, 1)
+    Tx = features.shape[1]
+    labels = map(lambda l: np.repeat(l, Tx), labels_arr)
+    labels = np.array(labels).transpose()
+    labels = labels.reshape(Tx, m, 1)
     n_x = len(initials[0])
     initials = map(lambda init: np.array(init).reshape(n_x, 1).transpose(), initials)
+    initials = np.array(initials).reshape(m, n_x)
     return (initials, features, labels)
 
 # if __name__ == "__main__":

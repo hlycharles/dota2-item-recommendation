@@ -1,5 +1,5 @@
-# dota2-item-recommendation
-A neural network that recommends items to purchase next based on current game status.
+# dota2-result-prediction
+Plain and recurrent neural networks that predict if a team will win based on current game status.
 
 ## Workflow
 1. Generate features from raw data: `python feature_generator <raw_input_folder> <features_folder>`
